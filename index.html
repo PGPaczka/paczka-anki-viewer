@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Paczka Anki Viewer</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+  <link rel="stylesheet" href="/src/style.css" />
+</head>
+<body>
+  <div id="app">
+    <div id="loading">
+      <div class="spinner"></div>
+      <p>Ładowanie talii Anki...</p>
+    </div>
+    <div id="error" class="hidden"></div>
+    <div id="content" class="hidden">
+      <header id="header">
+        <h1 id="deck-name">Anki Deck</h1>
+        <span id="card-count"></span>
+        <span id="fc-stats" class="hidden">
+          <span id="fc-remaining">📋 <strong>0</strong></span>
+          <span id="fc-learned">✅ <strong>0</strong></span>
+          <span id="fc-not-learned">❌ <strong>0</strong></span>
+        </span>
+        <div id="fc-header-controls" class="hidden">
+          <button id="fc-shuffle" class="fc-btn-small">🔀</button>
+          <button id="fc-reset" class="fc-btn-small">🔄</button>
+        </div>
+        <div id="mode-switch">
+          <button id="btn-list" class="mode-btn active">Lista</button>
+          <button id="btn-flashcard" class="mode-btn">Fiszki</button>
+        </div>
+      </header>
+      <!-- List mode -->
+      <div id="list-mode">
+        <div id="controls">
+          <input type="text" id="search" placeholder="Szukaj w kartach..." />
+        </div>
+        <div id="cards"></div>
+      </div>
+      <!-- Flashcard mode -->
+      <div id="flashcard-mode" class="hidden">
+        <div id="flashcard-container">
+          <div id="swipe-indicator-left" class="swipe-indicator left">❌</div>
+          <div id="swipe-indicator-right" class="swipe-indicator right">✅</div>
+          <div id="flashcard" class="flashcard">
+            <div class="flashcard-inner" id="flashcard-inner">
+              <div class="flashcard-face flashcard-front">
+                <div class="flashcard-label">Przód</div>
+                <div class="flashcard-content" id="fc-front"></div>
+                <div class="flashcard-bottom">
+                  <span class="flashcard-hint">Kliknij aby odkryć</span>
+                  <span id="fc-counter">1 / 1</span>
+                </div>
+              </div>
+              <div class="flashcard-face flashcard-back">
+                <div class="flashcard-label">Tył</div>
+                <div class="flashcard-content" id="fc-back"></div>
+                <div class="flashcard-actions">
+                  <button id="fc-not-known" class="fc-btn fc-btn-red">❌ Nie umiem</button>
+                  <button id="fc-known" class="fc-btn fc-btn-green">✅ Umiem</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div id="fc-done" class="hidden">
+          <h2>🎉 Koniec talii!</h2>
+          <p id="fc-done-stats"></p>
+          <button id="fc-retry-wrong" class="fc-btn">🔁 Powtórz nie nauczone</button>
+          <button id="fc-restart" class="fc-btn">🔄 Od nowa</button>
+        </div>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
