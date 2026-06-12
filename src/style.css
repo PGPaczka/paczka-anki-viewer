@@ -402,6 +402,7 @@ body {
   justify-content: flex-start;
   padding-top: 16px;
   overflow-y: auto;
+  height: 100%;
 }
 
 .flashcard.quiz-mode {
@@ -427,7 +428,7 @@ body {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  overflow: hidden;
+  overflow-y: auto;
 }
 
 .flashcard-front {
@@ -636,6 +637,9 @@ body {
   align-items: center;
   padding: 40px 16px;
   gap: 12px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
 }
 
 #recent-decks h2 {
@@ -695,4 +699,560 @@ body {
   font-size: 0.85rem;
   color: #546e7a;
   text-align: center;
+}
+
+
+/* Menu divider */
+.menu-divider {
+  width: 100%;
+  max-width: 500px;
+  border: none;
+  border-top: 1px solid #2a2a4a;
+  margin: 20px 0 12px;
+}
+
+.local-section-title {
+  font-size: 1.1rem;
+  color: #e0e0e0;
+  margin-bottom: 10px;
+}
+
+/* Create/Import deck buttons */
+.create-deck-btn,
+.import-deck-btn {
+  margin-top: 10px;
+  width: 100%;
+  max-width: 500px;
+}
+
+/* Local deck list */
+#local-deck-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+  max-width: 500px;
+}
+
+.local-deck-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 18px;
+  background: #16213e;
+  border: 1px solid #2a2a4a;
+  border-radius: 10px;
+  transition: border-color 0.2s, background 0.2s;
+  flex-wrap: wrap;
+}
+
+.local-deck-item:hover {
+  border-color: #4fc3f7;
+  background: #1a2744;
+}
+
+.local-deck-info {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.local-deck-name {
+  font-size: 0.95rem;
+  color: #e0e0e0;
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+
+.local-deck-meta {
+  font-size: 0.75rem;
+  color: #607d8b;
+}
+
+.local-deck-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+  flex-wrap: wrap;
+}
+
+.local-deck-actions button {
+  padding: 5px 10px;
+  border-radius: 6px;
+  border: 1px solid #333;
+  background: transparent;
+  color: #90a4ae;
+  cursor: pointer;
+  font-size: 0.75rem;
+  transition: all 0.2s;
+}
+
+.local-deck-actions button:hover {
+  border-color: #4fc3f7;
+  color: #e0e0e0;
+}
+
+.local-deck-actions .delete-btn:hover {
+  border-color: #c62828;
+  color: #ef9a9a;
+}
+
+/* Clone button on recent items */
+.recent-item {
+  position: relative;
+}
+
+.recent-item-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.clone-btn {
+  padding: 4px 10px;
+  border-radius: 5px;
+  border: 1px solid #333;
+  background: transparent;
+  color: #90a4ae;
+  cursor: pointer;
+  font-size: 0.7rem;
+  transition: all 0.2s;
+  text-decoration: none;
+}
+
+.clone-btn:hover {
+  border-color: #4fc3f7;
+  color: #e0e0e0;
+}
+
+/* Deck editor */
+#deck-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  padding: 10px 0;
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.editor-name-input {
+  flex: 1;
+  min-width: 150px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  border: 1px solid #333;
+  background: #16213e;
+  color: #e0e0e0;
+  font-size: 1rem;
+  font-weight: 600;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.editor-name-input:focus {
+  border-color: #4fc3f7;
+}
+
+.editor-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-shrink: 0;
+}
+
+.editor-count {
+  font-size: 0.85rem;
+  color: #607d8b;
+}
+
+#editor-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.editor-card {
+  background: #16213e;
+  border: 1px solid #2a2a4a;
+  border-radius: 10px;
+  padding: 14px 16px;
+  flex-shrink: 0;
+}
+
+.editor-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.editor-card-num {
+  font-size: 0.75rem;
+  color: #607d8b;
+  font-weight: 600;
+}
+
+.editor-card-delete {
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid #333;
+  background: transparent;
+  color: #90a4ae;
+  cursor: pointer;
+  font-size: 0.7rem;
+  transition: all 0.2s;
+}
+
+.editor-card-delete:hover {
+  border-color: #c62828;
+  color: #ef9a9a;
+}
+
+.editor-field {
+  margin-bottom: 8px;
+}
+
+.editor-field label {
+  display: block;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #607d8b;
+  margin-bottom: 4px;
+}
+
+.editor-field textarea {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #333;
+  background: #1a2744;
+  color: #e0e0e0;
+  font-size: 0.85rem;
+  font-family: inherit;
+  resize: none;
+  overflow-y: auto;
+  min-height: 38px;
+  max-height: 200px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.editor-field textarea:focus {
+  border-color: #4fc3f7;
+}
+
+/* Local deck empty state */
+.local-empty {
+  font-size: 0.85rem;
+  color: #546e7a;
+  text-align: center;
+  padding: 8px;
+}
+
+
+/* Editor add card group */
+.editor-add-group {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.editor-add-group .fc-btn {
+  font-size: 0.75rem;
+  padding: 6px 12px;
+}
+
+/* Editor card type badge */
+.editor-card-type {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #1a3a5c;
+  color: #4fc3f7;
+}
+
+.editor-card-type.quiz {
+  background: #2d1b3d;
+  color: #ce93d8;
+}
+
+.editor-card-type.cloze {
+  background: #1b2d1b;
+  color: #a5d6a7;
+}
+
+/* Quiz editor specifics */
+.editor-options-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.editor-option-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-option-row input[type="text"] {
+  flex: 1;
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #333;
+  background: #1a2744;
+  color: #e0e0e0;
+  font-size: 0.85rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.editor-option-row input[type="text"]:focus {
+  border-color: #4fc3f7;
+}
+
+.editor-option-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  accent-color: #43a047;
+  cursor: pointer;
+}
+
+.editor-option-remove {
+  padding: 4px 8px;
+  border-radius: 4px;
+  border: 1px solid #333;
+  background: transparent;
+  color: #90a4ae;
+  cursor: pointer;
+  font-size: 0.7rem;
+}
+
+.editor-option-remove:hover {
+  border-color: #c62828;
+  color: #ef9a9a;
+}
+
+.editor-add-option {
+  font-size: 0.75rem;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 1px dashed #444;
+  background: transparent;
+  color: #607d8b;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.editor-add-option:hover {
+  border-color: #4fc3f7;
+  color: #e0e0e0;
+}
+
+.editor-hint {
+  font-size: 0.7rem;
+  color: #546e7a;
+  font-style: italic;
+  margin-top: 4px;
+}
+
+
+/* Editor field row with image button */
+.editor-field-row {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.editor-field-row textarea {
+  flex: 1;
+  min-width: 0;
+}
+
+.editor-img-btn {
+  padding: 6px 10px;
+  border-radius: 6px;
+  border: 1px solid #333;
+  background: transparent;
+  color: #90a4ae;
+  cursor: pointer;
+  font-size: 0.85rem;
+  flex-shrink: 0;
+  transition: all 0.2s;
+  margin-top: 1px;
+}
+
+.editor-img-btn:hover {
+  border-color: #4fc3f7;
+  color: #e0e0e0;
+  background: #1a3a5c;
+}
+
+
+/* Editor field preview (rendered HTML under textarea) */
+.editor-field-preview {
+  margin-top: 6px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #2a2a4a;
+  background: #111a2e;
+  max-height: 200px;
+  overflow-y: auto;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  color: #b0bec5;
+}
+
+.editor-field-preview img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+  display: block;
+  margin: 4px 0;
+}
+
+.editor-field-preview:empty {
+  display: none;
+}
+
+
+/* Quill editor dark theme overrides */
+.quill-editor {
+  margin-bottom: 4px;
+}
+
+.quill-editor .ql-toolbar {
+  border-color: #333 !important;
+  background: #111a2e;
+  border-radius: 6px 6px 0 0;
+}
+
+.quill-editor .ql-toolbar .ql-stroke {
+  stroke: #90a4ae;
+}
+
+.quill-editor .ql-toolbar .ql-fill {
+  fill: #90a4ae;
+}
+
+.quill-editor .ql-toolbar .ql-picker-label {
+  color: #90a4ae;
+}
+
+.quill-editor .ql-toolbar button:hover .ql-stroke {
+  stroke: #4fc3f7;
+}
+
+.quill-editor .ql-toolbar button:hover .ql-fill {
+  fill: #4fc3f7;
+}
+
+.quill-editor .ql-container {
+  border-color: #333 !important;
+  background: #1a2744;
+  border-radius: 0 0 6px 6px;
+  min-height: 60px;
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: 0.9rem;
+  color: #e0e0e0;
+}
+
+.quill-editor .ql-editor {
+  min-height: 50px;
+  color: #e0e0e0;
+}
+
+.quill-editor .ql-editor.ql-blank::before {
+  color: #546e7a;
+  font-style: italic;
+}
+
+.quill-editor .ql-editor img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+.quill-editor .ql-snow .ql-picker-options {
+  background: #1a2744;
+  border-color: #333;
+}
+
+
+/* Quill option editors (compact) */
+.quill-option {
+  flex: 1;
+  min-width: 0;
+}
+
+.quill-option .ql-toolbar {
+  border-color: #333 !important;
+  background: #111a2e;
+  border-radius: 6px 6px 0 0;
+  padding: 4px 6px !important;
+}
+
+.quill-option .ql-container {
+  border-color: #333 !important;
+  background: #1a2744;
+  border-radius: 0 0 6px 6px;
+  min-height: 36px;
+  max-height: 150px;
+  overflow-y: auto;
+  font-size: 0.85rem;
+  color: #e0e0e0;
+}
+
+.quill-option .ql-editor {
+  min-height: 28px;
+  padding: 6px 10px;
+  color: #e0e0e0;
+}
+
+.quill-option .ql-editor.ql-blank::before {
+  color: #546e7a;
+  font-style: italic;
+}
+
+.quill-option .ql-editor img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+.editor-option-row {
+  align-items: flex-start;
+}
+
+
+/* Editor pagination */
+.editor-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 10px 0;
+  flex-shrink: 0;
+}
+
+.editor-page-info {
+  font-size: 0.8rem;
+  color: #607d8b;
 }

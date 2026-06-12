@@ -85,6 +85,116 @@ const $search = document.getElementById('search')
 
 let allCards = []
 
+const LOCAL_DECKS_KEY = 'paczka-anki:local-decks'
+const OWNER_TOKENS_KEY = 'paczka-anki:owner-tokens'
+const MY_LIBRARY_KEY = 'paczka-anki:my-library'
+
+// ============ OWNER TOKEN HELPERS ============
+
+function getOwnerTokens() {
+  try { return JSON.parse(localStorage.getItem(OWNER_TOKENS_KEY) || '{}') } catch { return {} }
+}
+
+function saveOwnerToken(deckId, token) {
+  const tokens = getOwnerTokens()
+  tokens[deckId] = token
+  localStorage.setItem(OWNER_TOKENS_KEY, JSON.stringify(tokens))
+}
+
+function getOwnerToken(deckId) {
+  return getOwnerTokens()[deckId] || null
+}
+
+function removeOwnerToken(deckId) {
+  const tokens = getOwnerTokens()
+  delete tokens[deckId]
+  localStorage.setItem(OWNER_TOKENS_KEY, JSON.stringify(tokens))
+}
+
+function isOwnDeck(deckId) {
+  return !!getOwnerToken(deckId)
+}
+
+// Check URL for token param and save it (edit link); also add deck to library
+;(function checkUrlToken() {
+  const p = new URLSearchParams(window.location.search)
+  const deckId = p.get('deck')
+  const token = p.get('token')
+  if (deckId) {
+    addToLibrary(deckId)
+    if (token) {
+      saveOwnerToken(deckId, token)
+      // Clean token from URL (keep deck param)
+      const cleanUrl = new URL(window.location)
+      cleanUrl.searchParams.delete('token')
+      history.replaceState(null, '', cleanUrl)
+    }
+  }
+})()
+
+// ============ BACKEND API HELPERS ============
+
+const API_BASE = '/api'
+
+async function apiGetDecks() {
+  try {
+    const res = await fetch(`${API_BASE}/decks`)
+    if (!res.ok) return []
+    return await res.json()
+  } catch { return [] }
+}
+
+async function apiUploadDeck(apkgBlob, name, cardCount) {
+  const form = new FormData()
+  form.append('file', apkgBlob, name + '.apkg')
+  form.append('name', name)
+  form.append('cardCount', String(cardCount))
+  const res = await fetch(`${API_BASE}/decks`, { method: 'POST', body: form })
+  const data = await res.json()
+  // Save owner token and add to library
+  if (data.ownerToken) {
+    saveOwnerToken(data.id, data.ownerToken)
+  }
+  addToLibrary(data.id)
+  return data
+}
+
+async function apiUpdateDeck(id, apkgBlob, name, cardCount) {
+  const token = getOwnerToken(id)
+  const form = new FormData()
+  form.append('file', apkgBlob, name + '.apkg')
+  form.append('name', name)
+  form.append('cardCount', String(cardCount))
+  const res = await fetch(`${API_BASE}/decks/${id}`, {
+    method: 'PUT',
+    headers: token ? { 'X-Owner-Token': token } : {},
+    body: form,
+  })
+  return await res.json()
+}
+
+async function apiDeleteDeck(id) {
+  const token = getOwnerToken(id)
+  await fetch(`${API_BASE}/decks/${id}`, {
+    method: 'DELETE',
+    headers: token ? { 'X-Owner-Token': token } : {},
+  })
+  removeOwnerToken(id)
+}
+
+async function apiPatchMeta(id, meta) {
+  const token = getOwnerToken(id)
+  await fetch(`${API_BASE}/decks/${id}/meta`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...(token ? { 'X-Owner-Token': token } : {}) },
+    body: JSON.stringify(meta),
+  })
+}
+
+function apiDeckFileUrl(id) {
+  return `${API_BASE}/decks/${id}/file`
+}
+
 function showError(msg) {
   $loading.classList.add('hidden')
   $error.classList.remove('hidden')
@@ -98,6 +208,7 @@ function showContent() {
   const $back = document.getElementById('back-to-menu')
   const backUrl = new URL(window.location)
   backUrl.searchParams.delete('url')
+  backUrl.searchParams.delete('deck')
   backUrl.searchParams.delete('mode')
   $back.href = backUrl.toString()
   $back.classList.remove('hidden')
@@ -107,6 +218,10 @@ function stripHtml(html) {
   const div = document.createElement('div')
   div.innerHTML = html
   return div.textContent || div.innerText || ''
+}
+
+function escapeHtmlAttr(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 function sanitizeHtml(html) {
@@ -342,20 +457,24 @@ function parseClozeCard(fields, names) {
  * Detect if fields represent a quiz/multiple-choice card using field names from notetypes.
  */
 function detectQuizFormat(fields, names) {
-  if (fields.length < 5) return false
+  if (fields.length < 3) return false
+
   // If we have field names, check for quiz-like structure
   if (names.length > 0) {
     const lower = names.map(n => n.toLowerCase())
-    const hasQuestion = lower.some(n => n.includes('question') || n.includes('pytanie'))
-    // Check for numbered answer/option fields (Answer 1, Q_1, etc.)
-    const hasNumberedOptions = lower.some(n => /^(q_?\d|answer_?\s*\d|opt(ion)?_?\s*\d)/i.test(n))
-    if (hasQuestion && hasNumberedOptions) return true
+    const hasQuestion = lower.some(n => n.includes('question') || n.includes('pytanie') || n.includes('treść') || n.includes('tresc'))
+    // Check for numbered answer/option fields (Answer 1, Q_1, opt1, A/B/C/D)
+    const hasNumberedOptions = lower.some(n => /^(q_?\d|answer_?\s*\d|opt(ion)?_?\s*\d|odp(owied[źz])?_?\s*\d)/i.test(n))
+    const hasLetterOptions = lower.filter(n => /^[a-e]$/i.test(n)).length >= 3
+    if (hasQuestion && (hasNumberedOptions || hasLetterOptions)) return true
   }
-  // Fallback: look for answer mask pattern
-  for (let i = fields.length - 1; i >= Math.max(2, fields.length - 4); i--) {
-    const f = fields[i].trim()
+
+  // Fallback: look for answer mask pattern (binary string like "0 1 0 0")
+  for (let i = fields.length - 1; i >= Math.max(1, fields.length - 4); i--) {
+    const f = (fields[i] || '').trim()
     if (/^[01](\s+[01])+$/.test(f)) return true
   }
+
   return false
 }
 
@@ -376,7 +495,7 @@ function parseQuizCard(fields, names) {
   let maskIdx = -1
   for (let i = 0; i < names.length; i++) {
     const n = lowerNames[i]
-    if (n === 'answers' || n === 'answer' || n.includes('correct') || n.includes('poprawna') || n.includes('mask')) {
+    if (n === 'answers' || n === 'answer' || n.includes('correct') || n.includes('poprawna') || n.includes('mask') || n.includes('odpowied')) {
       if (/^[01](\s+[01])+$/.test((fields[i] || '').trim())) {
         maskIdx = i
         break
@@ -385,20 +504,33 @@ function parseQuizCard(fields, names) {
   }
   // Fallback: search by content pattern
   if (maskIdx === -1) {
-    for (let i = fields.length - 1; i >= 2; i--) {
-      if (/^[01](\s+[01])+$/.test(fields[i].trim())) {
+    for (let i = fields.length - 1; i >= 1; i--) {
+      if (/^[01](\s+[01])+$/.test((fields[i] || '').trim())) {
         maskIdx = i
         break
       }
     }
   }
   
-  // Identify option fields: Q_1, Q_2, Answer 1, Answer 2, etc.
+  // Identify option fields: Q_1, Q_2, Answer 1, Answer 2, A/B/C/D, odp1, etc.
   const options = []
   const optionFieldIndices = []
   for (let i = 0; i < names.length; i++) {
+    if (i === questionIdx || i === maskIdx) continue
     const n = lowerNames[i]
-    if (/^q_?\d+$/.test(n) || /^answer_?\s*\d+$/i.test(n) || /^(opt|option)_?\s*\d*$/i.test(n) || /^(a|b|c|d|e)$/i.test(n)) {
+    if (/^q_?\d+$/.test(n) || /^answer_?\s*\d+$/i.test(n) || /^(opt|option)_?\s*\d*$/i.test(n) || /^[a-e]$/i.test(n) || /^odp(owied[źz])?_?\s*\d+$/i.test(n)) {
+      if (fields[i] && fields[i].trim() !== '') {
+        options.push(fields[i])
+        optionFieldIndices.push(i)
+      }
+    }
+  }
+
+  // If no named options found, use all fields between question and mask as options
+  if (options.length === 0) {
+    const start = questionIdx + 1
+    const end = maskIdx >= 0 ? maskIdx : fields.length
+    for (let i = start; i < end; i++) {
       if (fields[i] && fields[i].trim() !== '') {
         options.push(fields[i])
         optionFieldIndices.push(i)
@@ -417,7 +549,7 @@ function parseQuizCard(fields, names) {
   let explanation = ''
   for (let i = 0; i < names.length; i++) {
     const n = lowerNames[i]
-    if (n.includes('extra') || n.includes('explanation') || n.includes('wyjaśn') || n.includes('wyjasn')) {
+    if (n.includes('extra') || n.includes('explanation') || n.includes('wyjaśn') || n.includes('wyjasn') || n.includes('komentarz')) {
       if (fields[i] && fields[i].trim()) {
         explanation = fields[i]
         break
@@ -818,9 +950,11 @@ async function loadApkg(url) {
     renderCards(cards)
     showContent()
 
-    // Save to recent decks
+    // Save to recent decks (but not for local/API deck URLs)
     const displayName = deckName !== 'Default' ? deckName : fileName.replace('.apkg', '')
-    saveRecentDeck(url, displayName, cards.length)
+    if (!url.startsWith('/api/')) {
+      saveRecentDeck(url, displayName, cards.length)
+    }
 
     // Restore mode from URL
     const initialMode = params.get('mode')
@@ -862,28 +996,49 @@ function showRecentDecks() {
   const decks = getRecentDecks()
   if (decks.length === 0) {
     $recentEmpty.classList.remove('hidden')
-    return
+  } else {
+    $recentEmpty.classList.add('hidden')
+    $recentList.innerHTML = decks.map(d => {
+      const date = new Date(d.timestamp)
+      const dateStr = date.toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' })
+      const currentUrl = new URL(window.location)
+      currentUrl.searchParams.set('url', d.url)
+      const fileLabel = d.fileName ? `<div class="recent-item-file">${d.fileName}</div>` : ''
+      return `<a href="${currentUrl.toString()}" class="recent-item">
+        <div class="recent-item-name">📄 ${d.name}</div>
+        ${fileLabel}
+        <div class="recent-item-meta">${d.cardCount} kart · ${dateStr}</div>
+        <div class="recent-item-actions">
+          <span class="clone-btn" data-url="${d.url}" data-name="${d.name}">📋 Klonuj do edycji</span>
+        </div>
+      </a>`
+    }).join('')
+
+    // Clone button listeners
+    $recentList.querySelectorAll('.clone-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.preventDefault()
+        e.stopPropagation()
+        cloneRecentDeck(btn.dataset.url, btn.dataset.name)
+      })
+    })
   }
 
-  $recentList.innerHTML = decks.map(d => {
-    const date = new Date(d.timestamp)
-    const dateStr = date.toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' })
-    const currentUrl = new URL(window.location)
-    currentUrl.searchParams.set('url', d.url)
-    const fileLabel = d.fileName ? `<div class="recent-item-file">${d.fileName}</div>` : ''
-    return `<a href="${currentUrl.toString()}" class="recent-item">
-      <div class="recent-item-name">📄 ${d.name}</div>
-      ${fileLabel}
-      <div class="recent-item-meta">${d.cardCount} kart · ${dateStr}</div>
-    </a>`
-  }).join('')
+  // Render local decks
+  renderLocalDecks()
 }
 
 // Get URL from query params
 const params = new URLSearchParams(window.location.search)
 const fileUrl = params.get('url')
+const localDeckId = params.get('deck')
 
-if (!fileUrl) {
+if (localDeckId) {
+  // Open a local deck from server — use loadApkg with the API file URL
+  const fileUrl2 = apiDeckFileUrl(localDeckId)
+  console.log('[paczka-anki] Loading local deck:', localDeckId)
+  loadApkg(fileUrl2)
+} else if (!fileUrl) {
   showRecentDecks()
 } else {
   // If URL is relative, resolve against current origin
@@ -1396,3 +1551,1183 @@ $flashcard.addEventListener('touchcancel', () => {
   $swipeRight.classList.remove('visible')
   isSwiping = false
 })
+
+// ============ LOCAL DECKS (Custom user decks in localStorage) ============
+
+/**
+ * Extract cards from an open sql.js Database for use in the local editor.
+ * Detects basic, cloze, and quiz types using field names from notetypes.
+ */
+function extractCardsForEditor(db) {
+  // Extract field names per model
+  let fieldNames = {}
+  try {
+    const fieldsResult = db.exec("SELECT ntid, name, ord FROM fields ORDER BY ntid, ord")
+    if (fieldsResult.length > 0) {
+      for (const row of fieldsResult[0].values) {
+        const ntid = row[0]
+        const name = row[1]
+        if (!fieldNames[ntid]) fieldNames[ntid] = []
+        fieldNames[ntid].push(name)
+      }
+    }
+  } catch {}
+
+  if (Object.keys(fieldNames).length === 0) {
+    try {
+      const ntResult = db.exec("SELECT id, config FROM notetypes")
+      if (ntResult.length > 0) {
+        for (const row of ntResult[0].values) {
+          const id = row[0]
+          let config = row[1]
+          if (config instanceof Uint8Array) {
+            const text = new TextDecoder('utf-8', { fatal: false }).decode(config)
+            const names = []
+            const re = /([A-Za-zĄ-ż][\w\s]{1,30})/g
+            let m
+            while ((m = re.exec(text)) !== null) {
+              if (m[1].trim().length > 1) names.push(m[1].trim())
+            }
+            if (names.length >= 2) fieldNames[id] = names
+          } else {
+            try {
+              const parsed = JSON.parse(config)
+              if (parsed.flds) fieldNames[id] = parsed.flds.map(f => f.name || f.n || '')
+            } catch {}
+          }
+        }
+      }
+    } catch {}
+  }
+
+  if (Object.keys(fieldNames).length === 0) {
+    try {
+      const colResult = db.exec("SELECT models FROM col LIMIT 1")
+      if (colResult.length > 0 && colResult[0].values.length > 0) {
+        const models = JSON.parse(colResult[0].values[0][0])
+        for (const [id, model] of Object.entries(models)) {
+          if (model.flds) fieldNames[id] = model.flds.map(f => f.name || '')
+        }
+      }
+    } catch {}
+  }
+
+  // Extract notes with model ID
+  let cards = []
+  try {
+    const notesResult = db.exec("SELECT mid, flds FROM notes ORDER BY id")
+    if (notesResult.length > 0) {
+      cards = notesResult[0].values.map(row => {
+        const mid = row[0]
+        let rawFields = row[1]
+        if (!rawFields) return null
+        if (rawFields instanceof Uint8Array) rawFields = new TextDecoder('utf-8').decode(rawFields)
+        if (typeof rawFields !== 'string') rawFields = String(rawFields)
+        const fields = rawFields.split('\x1f')
+        const names = fieldNames[mid] || []
+
+        // Detect quiz
+        if (detectQuizFormat(fields, names)) {
+          const parsed = parseQuizCard(fields, names)
+          return { type: 'quiz', front: parsed.front, options: parsed.options, correctIndices: parsed.correctIndices, explanation: parsed.explanation || '' }
+        }
+
+        const front = fields[0] || ''
+        // Detect cloze
+        if (front.includes('{{c')) {
+          return { type: 'cloze', clozeText: front, extra: fields.slice(1).filter(f => f.trim()).join('\n') }
+        }
+
+        const back = fields.length > 1 ? fields.slice(1).filter(f => f.trim()).join('<hr/>') : ''
+        return { type: 'basic', front, back }
+      }).filter(c => {
+        if (!c) return false
+        const ft = stripHtml(c.front || c.clozeText || '').trim()
+        if (!ft) return false
+        if (ft.toLowerCase().includes('please update to the latest anki version')) return false
+        if (/^\s*[\d\s]+\s*$/.test(ft) && ft.length < 20) return false
+        return true
+      })
+    }
+  } catch {}
+
+  return cards
+}
+
+/**
+ * Embed media files from the .apkg ZIP directly into card HTML as base64 data URIs.
+ * This handles references like <img src="paste-abc123.jpg"> by finding the file in the ZIP.
+ */
+async function embedMediaInCards(cards, zip) {
+  // Build media mapping: numbered files -> original filenames
+  let mediaMapping = null
+  try {
+    const mediaFile = zip.file('media')
+    if (mediaFile) {
+      const mediaRaw = await mediaFile.async('uint8array')
+      // Try JSON
+      try {
+        const text = new TextDecoder().decode(mediaRaw)
+        mediaMapping = JSON.parse(text)
+      } catch {}
+      // Try zstd + JSON
+      if (!mediaMapping) {
+        try {
+          const decompressed = zstdDecompress(mediaRaw)
+          const text = new TextDecoder().decode(decompressed)
+          mediaMapping = JSON.parse(text)
+        } catch {}
+      }
+      // Try protobuf format
+      if (!mediaMapping) {
+        try {
+          let data = mediaRaw
+          if (data.length > 4 && data[0] === 0x28 && data[1] === 0xB5 && data[2] === 0x2F && data[3] === 0xFD) {
+            data = zstdDecompress(data)
+          }
+          const decoder = new TextDecoder('utf-8', { fatal: false })
+          const filenames = []
+          let i = 0
+          while (i < data.length) {
+            if (data[i] !== 0x0a) { i++; continue }
+            i++
+            let outerLen = 0, shift = 0
+            while (i < data.length && (data[i] & 0x80) !== 0) { outerLen |= (data[i] & 0x7f) << shift; shift += 7; i++ }
+            if (i >= data.length) break
+            outerLen |= (data[i] & 0x7f) << shift; i++
+            const entryEnd = i + outerLen
+            if (entryEnd > data.length || outerLen < 4) { i = entryEnd; continue }
+            if (data[i] === 0x0a) {
+              i++
+              let nameLen = 0; shift = 0
+              while (i < entryEnd && (data[i] & 0x80) !== 0) { nameLen |= (data[i] & 0x7f) << shift; shift += 7; i++ }
+              if (i >= entryEnd) break
+              nameLen |= (data[i] & 0x7f) << shift; i++
+              if (nameLen > 0 && nameLen < 500 && i + nameLen <= entryEnd) {
+                filenames.push(decoder.decode(data.slice(i, i + nameLen)))
+              }
+            }
+            i = entryEnd
+          }
+          if (filenames.length > 0) {
+            const numberedFiles = Object.keys(zip.files).filter(n => /^\d+$/.test(n)).sort((a, b) => +a - +b)
+            mediaMapping = {}
+            for (let idx = 0; idx < Math.min(numberedFiles.length, filenames.length); idx++) {
+              mediaMapping[numberedFiles[idx]] = filenames[idx]
+            }
+          }
+        } catch {}
+      }
+    }
+  } catch {}
+
+  // Build reverse mapping: filename -> zip entry number
+  const filenameToZipEntry = {}
+  if (mediaMapping) {
+    for (const [num, filename] of Object.entries(mediaMapping)) {
+      filenameToZipEntry[filename] = num
+    }
+  }
+  // Also check direct filenames in ZIP
+  for (const name of Object.keys(zip.files)) {
+    if (name !== 'media' && !name.startsWith('collection.') && name !== 'meta' && !zip.files[name].dir) {
+      if (!filenameToZipEntry[name]) {
+        filenameToZipEntry[name] = name
+      }
+    }
+  }
+
+  // Collect all referenced filenames from cards
+  const referencedFiles = new Set()
+  const imgRegex = /src="([^"]+)"/gi
+  for (const card of cards) {
+    const fields = [card.front, card.back, card.clozeText, card.extra, card.explanation].filter(Boolean)
+    for (const field of fields) {
+      let m
+      imgRegex.lastIndex = 0
+      while ((m = imgRegex.exec(field)) !== null) {
+        const src = m[1]
+        if (!src.startsWith('data:') && !src.startsWith('http')) {
+          referencedFiles.add(src)
+        }
+      }
+    }
+  }
+
+  if (referencedFiles.size === 0) return
+
+  // Load referenced files and convert to base64
+  const base64Map = {}
+  for (const filename of referencedFiles) {
+    const zipEntryName = filenameToZipEntry[filename]
+    if (!zipEntryName) continue
+    const file = zip.file(zipEntryName)
+    if (!file) continue
+    try {
+      let data = await file.async('uint8array')
+      // Decompress zstd if needed
+      if (data.length > 4 && data[0] === 0x28 && data[1] === 0xB5 && data[2] === 0x2F && data[3] === 0xFD) {
+        try { data = zstdDecompress(data) } catch {}
+      }
+      // Detect mime type
+      let mime = 'image/png'
+      if (data[0] === 0xFF && data[1] === 0xD8) mime = 'image/jpeg'
+      else if (data[0] === 0x89 && data[1] === 0x50) mime = 'image/png'
+      else if (data[0] === 0x47 && data[1] === 0x49) mime = 'image/gif'
+      else if (data[0] === 0x52 && data[1] === 0x49 && data[2] === 0x46 && data[3] === 0x46) mime = 'image/webp'
+      // Convert to base64
+      let binary = ''
+      for (let j = 0; j < data.length; j++) binary += String.fromCharCode(data[j])
+      const b64 = btoa(binary)
+      base64Map[filename] = `data:${mime};base64,${b64}`
+    } catch {}
+  }
+
+  // Replace src references in all card fields
+  for (const card of cards) {
+    for (const key of ['front', 'back', 'clozeText', 'extra', 'explanation']) {
+      if (card[key]) {
+        card[key] = card[key].replace(/src="([^"]+)"/gi, (match, src) => {
+          if (base64Map[src]) return `src="${base64Map[src]}"`
+          return match
+        })
+      }
+    }
+  }
+}
+
+function getLocalDecks() {
+  // Cache of deck metadata from API (for quick rendering)
+  try {
+    return JSON.parse(localStorage.getItem(LOCAL_DECKS_KEY) || '[]')
+  } catch { return [] }
+}
+
+function saveLocalDecks(decks) {
+  localStorage.setItem(LOCAL_DECKS_KEY, JSON.stringify(decks))
+}
+
+// Library = list of deck IDs the user has in their dashboard
+
+function getMyLibrary() {
+  try { return JSON.parse(localStorage.getItem(MY_LIBRARY_KEY) || '[]') } catch { return [] }
+}
+
+function addToLibrary(deckId) {
+  const lib = getMyLibrary()
+  if (!lib.includes(deckId)) {
+    lib.push(deckId)
+    localStorage.setItem(MY_LIBRARY_KEY, JSON.stringify(lib))
+  }
+}
+
+function removeFromLibrary(deckId) {
+  const lib = getMyLibrary().filter(id => id !== deckId)
+  localStorage.setItem(MY_LIBRARY_KEY, JSON.stringify(lib))
+}
+
+function generateDeckId() {
+  return 'deck_' + Date.now() + '_' + Math.random().toString(36).slice(2, 8)
+}
+
+function renderLocalDecks() {
+  const $list = document.getElementById('local-deck-list')
+  if (!$list) return
+
+  const library = getMyLibrary()
+
+  // Show cached version immediately (filtered by library)
+  const cached = getLocalDecks().filter(d => library.includes(d.id))
+  renderLocalDecksList($list, cached)
+
+  // Fetch fresh data from API
+  apiGetDecks().then(decks => {
+    saveLocalDecks(decks) // cache all
+    const filtered = decks.filter(d => library.includes(d.id))
+    renderLocalDecksList($list, filtered)
+  })
+}
+
+function renderLocalDecksList($list, decks) {
+  if (decks.length === 0) {
+    $list.innerHTML = '<p class="local-empty">Brak talii. Stwórz nową lub sklonuj z listy ostatnich.</p>'
+    return
+  }
+
+  $list.innerHTML = decks.map(d => {
+    const date = new Date(d.updatedAt || d.createdAt)
+    const dateStr = date.toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' })
+    const own = isOwnDeck(d.id)
+    const editBtn = own ? `<button class="edit-btn" data-id="${d.id}" title="Edytuj">✏️</button>` : ''
+    const deleteBtn = own
+      ? `<button class="delete-btn" data-id="${d.id}" title="Usuń z serwera">🗑️</button><button class="remove-btn" data-id="${d.id}" title="Usuń z biblioteki">✕</button>`
+      : `<button class="remove-btn" data-id="${d.id}" title="Usuń z biblioteki">✕</button>`
+    const shareEditBtn = own ? `<button class="share-edit-btn" data-id="${d.id}" title="Udostępnij do edycji">🔗✏️</button>` : ''
+    return `<div class="local-deck-item" data-id="${d.id}">
+      <div class="local-deck-info" data-id="${d.id}">
+        <div class="local-deck-name">${own ? '✏️' : '📄'} ${d.name}</div>
+        <div class="local-deck-meta">${d.cardCount || 0} kart · ${dateStr}</div>
+      </div>
+      <div class="local-deck-actions">
+        ${editBtn}
+        <button class="play-btn" data-id="${d.id}" title="Ucz się">▶️</button>
+        <button class="share-btn" data-id="${d.id}" title="Udostępnij (tylko podgląd)">🔗</button>
+        ${shareEditBtn}
+        <button class="export-single-btn" data-id="${d.id}" title="Eksportuj">📤</button>
+        ${deleteBtn}
+      </div>
+    </div>`
+  }).join('')
+
+  // Event listeners
+  $list.querySelectorAll('.local-deck-info').forEach(el => {
+    el.addEventListener('click', () => openLocalDeck(el.dataset.id))
+  })
+  $list.querySelectorAll('.edit-btn').forEach(el => {
+    el.addEventListener('click', (e) => { e.stopPropagation(); openEditor(el.dataset.id) })
+  })
+  $list.querySelectorAll('.play-btn').forEach(el => {
+    el.addEventListener('click', (e) => { e.stopPropagation(); openLocalDeck(el.dataset.id) })
+  })
+  $list.querySelectorAll('.share-btn').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const shareUrl = new URL(window.location)
+      shareUrl.search = ''
+      shareUrl.searchParams.set('deck', el.dataset.id)
+      navigator.clipboard.writeText(shareUrl.toString()).then(() => {
+        el.textContent = '✅'
+        setTimeout(() => { el.textContent = '🔗' }, 1500)
+      })
+    })
+  })
+  $list.querySelectorAll('.share-edit-btn').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation()
+      const id = el.dataset.id
+      const token = getOwnerToken(id)
+      const shareUrl = new URL(window.location)
+      shareUrl.search = ''
+      shareUrl.searchParams.set('deck', id)
+      if (token) shareUrl.searchParams.set('token', token)
+      navigator.clipboard.writeText(shareUrl.toString()).then(() => {
+        el.textContent = '✅'
+        setTimeout(() => { el.textContent = '🔗✏️' }, 1500)
+      })
+    })
+  })
+  $list.querySelectorAll('.export-single-btn').forEach(el => {
+    el.addEventListener('click', (e) => { e.stopPropagation(); exportDeck(el.dataset.id) })
+  })
+  $list.querySelectorAll('.delete-btn').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation()
+      if (confirm('Usunąć tę talię z serwera? Tej operacji nie można cofnąć.')) {
+        deleteLocalDeck(el.dataset.id, true)
+      }
+    })
+  })
+  $list.querySelectorAll('.remove-btn').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation()
+      deleteLocalDeck(el.dataset.id, false)
+    })
+  })
+}
+
+async function deleteLocalDeck(id, fromServer) {
+  if (fromServer) {
+    await apiDeleteDeck(id)
+  }
+  removeFromLibrary(id)
+  removeOwnerToken(id)
+  renderLocalDecks()
+}
+
+async function openLocalDeck(id) {
+  // Fetch the .apkg from the server and parse it like any other deck
+  const fileUrl = apiDeckFileUrl(id)
+  
+  // Hide menu, show loading
+  document.getElementById('recent-decks').classList.add('hidden')
+  $loading.classList.remove('hidden')
+  $loading.querySelector('p').textContent = 'Ładowanie talii...'
+
+  // Use the existing loadApkg function — it handles everything
+  // But we need to update the URL params so back button works
+  const url = new URL(window.location)
+  url.searchParams.set('deck', id)
+  url.searchParams.delete('url')
+  history.pushState(null, '', url)
+
+  await loadApkg(fileUrl)
+}
+
+function exportDeck(id) {
+  // Direct download from server
+  window.location.href = apiDeckFileUrl(id)
+}
+
+/**
+ * Generate a valid .apkg Blob from cards.
+ * Creates a ZIP containing a SQLite database (collection.anki2) with proper Anki schema.
+ */
+async function generateApkgBlob(deckName, cards) {
+  try {
+    const initSqlJs = await loadSqlJs()
+    const SQL = await initSqlJs({
+      locateFile: (file) => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.11.0/${file}`,
+    })
+
+    const db = new SQL.Database()
+
+    // Create Anki 2.0 compatible schema
+    const modelId = Date.now()
+    const deckId = modelId + 1
+
+    const models = {}
+    models[modelId] = {
+      id: modelId,
+      name: 'Basic',
+      type: 0,
+      mod: Math.floor(Date.now() / 1000),
+      usn: -1,
+      sortf: 0,
+      did: deckId,
+      tmpls: [{
+        name: 'Card 1',
+        ord: 0,
+        qfmt: '{{Front}}',
+        afmt: '{{FrontSide}}<hr id=answer>{{Back}}',
+        bqfmt: '',
+        bafmt: '',
+        did: null,
+        bfont: '',
+        bsize: 0,
+      }],
+      flds: [
+        { name: 'Front', ord: 0, sticky: false, rtl: false, font: 'Arial', size: 20, media: [] },
+        { name: 'Back', ord: 1, sticky: false, rtl: false, font: 'Arial', size: 20, media: [] },
+      ],
+      css: '.card { font-family: arial; font-size: 20px; text-align: center; color: black; background-color: white; }',
+      latexPre: '',
+      latexPost: '',
+      latexsvg: false,
+      req: [[0, 'any', [0]]],
+      tags: [],
+      vers: [],
+    }
+
+    const decksJson = {
+      1: { id: 1, name: 'Default', mod: 0, usn: 0, lrnToday: [0, 0], revToday: [0, 0], newToday: [0, 0], timeToday: [0, 0], collapsed: false, desc: '', dyn: 0, conf: 1, extendNew: 10, extendRev: 50 },
+    }
+    decksJson[deckId] = {
+      id: deckId, name: deckName, mod: Math.floor(Date.now() / 1000), usn: -1,
+      lrnToday: [0, 0], revToday: [0, 0], newToday: [0, 0], timeToday: [0, 0],
+      collapsed: false, desc: '', dyn: 0, conf: 1, extendNew: 10, extendRev: 50,
+    }
+
+    const dconf = { 1: { id: 1, name: 'Default', mod: 0, usn: 0, maxTaken: 60, autoplay: true, timer: 0, replayq: true, new: { delays: [1, 10], ints: [1, 4, 0], initialFactor: 2500, order: 1, perDay: 20 }, rev: { perDay: 200, ease4: 1.3, fuzz: 0.05, minSpace: 1, ivlFct: 1, maxIvl: 36500 }, lapse: { delays: [10], mult: 0, minInt: 1, leechFails: 8, leechAction: 0 } } }
+
+    db.run(`CREATE TABLE col (
+      id integer primary key,
+      crt integer not null,
+      mod integer not null,
+      scm integer not null,
+      ver integer not null,
+      dty integer not null,
+      usn integer not null,
+      ls integer not null,
+      conf text not null,
+      models text not null,
+      decks text not null,
+      dconf text not null,
+      tags text not null
+    )`)
+
+    const now = Math.floor(Date.now() / 1000)
+    db.run(`INSERT INTO col VALUES(1,?,?,?,11,0,-1,0,?,?,?,?,'{}')`, [
+      now, now * 1000, now * 1000,
+      JSON.stringify({ nextPos: cards.length, estTimes: true, activeDecks: [1], sortType: 'noteFld', timeLim: 0, sortBackwards: false, addToCur: true, curDeck: deckId, newSpread: 0, dueCounts: true, curModel: modelId, collapseTime: 1200 }),
+      JSON.stringify(models),
+      JSON.stringify(decksJson),
+      JSON.stringify(dconf),
+    ])
+
+    db.run(`CREATE TABLE notes (
+      id integer primary key,
+      guid text not null,
+      mid integer not null,
+      mod integer not null,
+      usn integer not null,
+      tags text not null,
+      flds text not null,
+      sfld text not null,
+      csum integer not null,
+      flags integer not null,
+      data text not null
+    )`)
+
+    db.run(`CREATE TABLE cards (
+      id integer primary key,
+      nid integer not null,
+      did integer not null,
+      ord integer not null,
+      mod integer not null,
+      usn integer not null,
+      type integer not null,
+      queue integer not null,
+      due integer not null,
+      ivl integer not null,
+      factor integer not null,
+      reps integer not null,
+      lapses integer not null,
+      left integer not null,
+      odue integer not null,
+      odid integer not null,
+      flags integer not null,
+      data text not null
+    )`)
+
+    db.run(`CREATE TABLE revlog (
+      id integer primary key,
+      cid integer not null,
+      usn integer not null,
+      ease integer not null,
+      ivl integer not null,
+      lastIvl integer not null,
+      factor integer not null,
+      time integer not null,
+      type integer not null
+    )`)
+
+    db.run(`CREATE TABLE graves (usn integer not null, oid integer not null, type integer not null)`)
+
+    // Insert notes and cards
+    const baseTs = Date.now()
+    for (let i = 0; i < cards.length; i++) {
+      const card = cards[i]
+      const noteId = baseTs + i
+      const cardId = baseTs + cards.length + i
+      const guid = Math.random().toString(36).slice(2, 12)
+
+      let flds, sfld
+      const type = card.type || 'basic'
+
+      if (type === 'cloze') {
+        // Store cloze text directly — Anki understands {{c1::...}} syntax
+        const text = card.clozeText || card.front || ''
+        const extra = card.extra || ''
+        flds = text + '\x1f' + extra
+        sfld = stripHtml(text)
+      } else if (type === 'quiz') {
+        // Store as front + options separated by field separator
+        const opts = (card.options || []).join('\x1f')
+        const mask = (card.options || []).map((_, oi) => (card.correctIndices || []).includes(oi) ? '1' : '0').join(' ')
+        const explanation = card.explanation || ''
+        flds = (card.front || '') + '\x1f' + opts + '\x1f' + mask + '\x1f' + explanation
+        sfld = stripHtml(card.front || '')
+      } else {
+        flds = (card.front || '') + '\x1f' + (card.back || '')
+        sfld = stripHtml(card.front || '')
+      }
+
+      // Simple checksum (first 8 digits of a hash)
+      let csum = 0
+      for (let j = 0; j < sfld.length; j++) { csum = ((csum << 5) - csum + sfld.charCodeAt(j)) | 0 }
+      csum = Math.abs(csum)
+
+      db.run(`INSERT INTO notes VALUES(?,?,?,?,?,'',?,?,?,0,'')`, [noteId, guid, modelId, now, -1, flds, sfld, csum])
+      db.run(`INSERT INTO cards VALUES(?,?,?,0,?,?,-1,0,0,?,0,0,0,0,0,0,0,'')`, [cardId, noteId, deckId, now, -1, i])
+    }
+
+    const dbData = db.export()
+    db.close()
+
+    // Create ZIP (.apkg)
+    const zip = new JSZip()
+    zip.file('collection.anki2', dbData)
+    zip.file('media', '{}')
+
+    return await zip.generateAsync({ type: 'blob' })
+  } catch (e) {
+    alert('Błąd generowania .apkg: ' + e.message)
+    console.error('[paczka-anki] apkg generation error:', e)
+    return null
+  }
+}
+
+async function exportAsApkg(deckName, cards) {
+  const blob = await generateApkgBlob(deckName, cards)
+  if (!blob) return
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${deckName.replace(/[^a-zA-Z0-9ąćęłńóśźżĄĆĘŁŃÓŚŹŻ _-]/g, '')}.apkg`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+// ============ DECK EDITOR ============
+
+let currentEditingDeckId = null
+
+async function openEditor(deckId) {
+  currentEditingDeckId = deckId || null
+
+  // Hide other views
+  document.getElementById('recent-decks').classList.add('hidden')
+  $content.classList.add('hidden')
+  $error.classList.add('hidden')
+
+  if (deckId) {
+    // Load existing deck from server and parse for editing
+    $loading.classList.remove('hidden')
+    $loading.querySelector('p').textContent = 'Ładowanie talii do edycji...'
+
+    try {
+      const res = await fetch(apiDeckFileUrl(deckId))
+      if (!res.ok) throw new Error('Nie udało się pobrać talii.')
+      const buffer = await res.arrayBuffer()
+      const zip = await JSZip.loadAsync(buffer)
+
+      let dbBuffer = null
+      if (zip.file('collection.anki21b')) {
+        const compressed = await zip.file('collection.anki21b').async('uint8array')
+        try { dbBuffer = zstdDecompress(compressed).buffer } catch {}
+      }
+      if (!dbBuffer) {
+        const dbFile = zip.file('collection.anki21') || zip.file('collection.anki2')
+        if (dbFile) dbBuffer = await dbFile.async('arraybuffer')
+      }
+      if (!dbBuffer) throw new Error('Nie znaleziono bazy kart.')
+
+      const initSqlJs = await loadSqlJs()
+      const SQL = await initSqlJs({ locateFile: (f) => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.11.0/${f}` })
+      const db = new SQL.Database(new Uint8Array(dbBuffer))
+
+      const cards = extractCardsForEditor(db)
+      db.close()
+
+      // Replace local media references with server URLs (fast, no base64 conversion)
+      for (const card of cards) {
+        for (const key of ['front', 'back', 'clozeText', 'extra', 'explanation']) {
+          if (card[key]) {
+            card[key] = card[key].replace(/src="([^"]+)"/gi, (match, src) => {
+              if (src.startsWith('data:') || src.startsWith('http') || src.startsWith('/')) return match
+              return `src="/api/decks/${deckId}/media/${src}"`
+            })
+          }
+        }
+      }
+
+      const decks = getLocalDecks()
+      const meta = decks.find(d => d.id === deckId)
+
+      $loading.classList.add('hidden')
+      const $editor = document.getElementById('deck-editor')
+      $editor.classList.remove('hidden')
+      document.getElementById('editor-deck-name').value = meta?.name || ''
+      renderEditorCards(cards)
+    } catch (e) {
+      $loading.classList.add('hidden')
+      alert('Błąd ładowania: ' + e.message)
+      document.getElementById('recent-decks').classList.remove('hidden')
+    }
+  } else {
+    // New deck
+    $loading.classList.add('hidden')
+    const $editor = document.getElementById('deck-editor')
+    $editor.classList.remove('hidden')
+    document.getElementById('editor-deck-name').value = ''
+    renderEditorCards([{ type: 'basic', front: '', back: '' }])
+  }
+}
+
+function autoResizeTextarea(ta) {
+  ta.style.height = 'auto'
+  ta.style.height = Math.min(ta.scrollHeight, 200) + 'px'
+}
+
+function updateFieldPreview(ta) {
+  // No longer needed with Quill
+}
+
+// Track active Quill instances
+let editorQuills = []
+
+const QUILL_TOOLBAR = [
+  ['bold', 'italic', 'underline', 'strike'],
+  [{ 'color': [] }],
+  ['image'],
+  ['clean']
+]
+
+function createQuillEditor(container, initialHtml) {
+  const quill = new Quill(container, {
+    theme: 'snow',
+    modules: {
+      toolbar: QUILL_TOOLBAR,
+    },
+    placeholder: 'Wpisz treść...',
+  })
+  if (initialHtml) {
+    quill.root.innerHTML = initialHtml
+  }
+  return quill
+}
+
+function renderEditorCards(cards) {
+  editorAllCards = cards
+  editorPage = 0
+  renderEditorPage()
+}
+
+const EDITOR_PAGE_SIZE = 10
+let editorAllCards = []
+let editorPage = 0
+
+function renderEditorPage() {
+  const cards = editorAllCards
+  const $editorCards = document.getElementById('editor-cards')
+  const total = cards.length
+  const totalPages = Math.ceil(total / EDITOR_PAGE_SIZE)
+  const start = editorPage * EDITOR_PAGE_SIZE
+  const end = Math.min(start + EDITOR_PAGE_SIZE, total)
+  const pageCards = cards.slice(start, end)
+
+  document.getElementById('editor-card-count').textContent = `${total} kart (str. ${editorPage + 1}/${totalPages || 1})`
+
+  // Destroy old quills
+  editorQuills = []
+
+  $editorCards.innerHTML = ''
+
+  // Pagination controls top
+  const pagHtml = totalPages > 1 ? `
+    <div class="editor-pagination">
+      <button class="fc-btn-small editor-prev" ${editorPage === 0 ? 'disabled' : ''}>← Poprzednia</button>
+      <span class="editor-page-info">Karty ${start + 1}–${end} z ${total}</span>
+      <button class="fc-btn-small editor-next" ${editorPage >= totalPages - 1 ? 'disabled' : ''}>Następna →</button>
+    </div>
+  ` : ''
+
+  $editorCards.innerHTML = pagHtml + pageCards.map((card, pi) => {
+    const i = start + pi
+    const type = card.type || 'basic'
+    let fieldsHtml = ''
+
+    if (type === 'basic') {
+      fieldsHtml = `
+        <div class="editor-field">
+          <label>Przód</label>
+          <div class="quill-editor" data-index="${i}" data-field="front"></div>
+        </div>
+        <div class="editor-field">
+          <label>Tył</label>
+          <div class="quill-editor" data-index="${i}" data-field="back"></div>
+        </div>
+      `
+    } else if (type === 'cloze') {
+      fieldsHtml = `
+        <div class="editor-field">
+          <label>Tekst z lukami</label>
+          <div class="quill-editor" data-index="${i}" data-field="clozeText"></div>
+          <p class="editor-hint">Użyj {{c1::odpowiedź}} lub {{c1::odpowiedź::podpowiedź}} dla luk.</p>
+        </div>
+        <div class="editor-field">
+          <label>Dodatkowe informacje (opcjonalnie)</label>
+          <div class="quill-editor" data-index="${i}" data-field="extra"></div>
+        </div>
+      `
+    } else if (type === 'quiz') {
+      const options = card.options || ['', '', '', '']
+      const correctIndices = card.correctIndices || []
+      const optionsHtml = options.map((opt, oi) => `
+        <div class="editor-option-row">
+          <input type="checkbox" data-index="${i}" data-option="${oi}" ${correctIndices.includes(oi) ? 'checked' : ''} title="Poprawna odpowiedź" />
+          <div class="quill-option" data-index="${i}" data-option="${oi}"></div>
+          <button class="editor-option-remove" data-index="${i}" data-option="${oi}">✕</button>
+        </div>
+      `).join('')
+
+      fieldsHtml = `
+        <div class="editor-field">
+          <label>Pytanie</label>
+          <div class="quill-editor" data-index="${i}" data-field="front"></div>
+        </div>
+        <div class="editor-field">
+          <label>Odpowiedzi (zaznacz poprawne)</label>
+          <div class="editor-options-list" data-index="${i}">
+            ${optionsHtml}
+          </div>
+          <button class="editor-add-option" data-index="${i}">+ Dodaj opcję</button>
+        </div>
+        <div class="editor-field">
+          <label>Wyjaśnienie (opcjonalnie)</label>
+          <div class="quill-editor" data-index="${i}" data-field="explanation"></div>
+        </div>
+      `
+    }
+
+    const typeBadge = type === 'quiz' ? 'quiz' : type === 'cloze' ? 'cloze' : ''
+    const typeLabel = type === 'basic' ? 'Podstawowa' : type === 'cloze' ? 'Luka' : 'Quiz'
+
+    return `
+      <div class="editor-card" data-index="${i}" data-type="${type}">
+        <div class="editor-card-header">
+          <span class="editor-card-num">Karta ${i + 1}</span>
+          <span class="editor-card-type ${typeBadge}">${typeLabel}</span>
+          <button class="editor-card-delete" data-index="${i}">🗑️ Usuń</button>
+        </div>
+        ${fieldsHtml}
+      </div>
+    `
+  }).join('')
+
+  // Initialize Quill editors
+  $editorCards.querySelectorAll('.quill-editor').forEach(el => {
+    const idx = parseInt(el.dataset.index)
+    const field = el.dataset.field
+    const card = editorAllCards[idx]
+    let html = ''
+    if (card) {
+      if (field === 'front') html = card.front || ''
+      else if (field === 'back') html = card.back || ''
+      else if (field === 'clozeText') html = card.clozeText || ''
+      else if (field === 'extra') html = card.extra || ''
+      else if (field === 'explanation') html = card.explanation || ''
+    }
+    const quill = createQuillEditor(el, html)
+    editorQuills.push({ quill, index: idx, field })
+  })
+
+  // Initialize Quill for quiz options (compact toolbar)
+  $editorCards.querySelectorAll('.quill-option').forEach(el => {
+    const idx = parseInt(el.dataset.index)
+    const oi = parseInt(el.dataset.option)
+    const card = editorAllCards[idx]
+    const html = (card && card.options && card.options[oi]) || ''
+    const quill = new Quill(el, {
+      theme: 'snow',
+      modules: { toolbar: false },
+      placeholder: `Opcja ${oi + 1}...`,
+    })
+    if (html) quill.root.innerHTML = html
+    editorQuills.push({ quill, index: idx, field: `option_${oi}` })
+  })
+
+  // Delete card handlers
+  $editorCards.querySelectorAll('.editor-card-delete').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = parseInt(btn.dataset.index)
+      syncEditorPageToCards()
+      editorAllCards.splice(idx, 1)
+      // Adjust page if needed
+      const totalPages = Math.ceil(editorAllCards.length / EDITOR_PAGE_SIZE)
+      if (editorPage >= totalPages && editorPage > 0) editorPage--
+      renderEditorPage()
+    })
+  })
+
+  // Add option handlers (quiz)
+  $editorCards.querySelectorAll('.editor-add-option').forEach(btn => {
+    btn.addEventListener('click', () => {
+      syncEditorPageToCards()
+      const idx = parseInt(btn.dataset.index)
+      if (editorAllCards[idx] && editorAllCards[idx].type === 'quiz') {
+        editorAllCards[idx].options.push('')
+        renderEditorPage()
+      }
+    })
+  })
+
+  // Remove option handlers (quiz)
+  $editorCards.querySelectorAll('.editor-option-remove').forEach(btn => {
+    btn.addEventListener('click', () => {
+      syncEditorPageToCards()
+      const idx = parseInt(btn.dataset.index)
+      const oi = parseInt(btn.dataset.option)
+      if (editorAllCards[idx] && editorAllCards[idx].type === 'quiz') {
+        editorAllCards[idx].options.splice(oi, 1)
+        editorAllCards[idx].correctIndices = (editorAllCards[idx].correctIndices || [])
+          .filter(ci => ci !== oi)
+          .map(ci => ci > oi ? ci - 1 : ci)
+        renderEditorPage()
+      }
+    })
+  })
+
+  // Pagination handlers
+  const prevBtn = $editorCards.querySelector('.editor-prev')
+  const nextBtn = $editorCards.querySelector('.editor-next')
+  if (prevBtn) prevBtn.addEventListener('click', () => { syncEditorPageToCards(); editorPage--; renderEditorPage() })
+  if (nextBtn) nextBtn.addEventListener('click', () => { syncEditorPageToCards(); editorPage++; renderEditorPage() })
+}
+
+function getEditorCards() {
+  syncEditorPageToCards()
+  return [...editorAllCards]
+}
+
+/** Sync current page's Quill editors back into editorAllCards */
+function syncEditorPageToCards() {
+  const $editorCards = document.getElementById('editor-cards')
+  const cardEls = $editorCards.querySelectorAll('.editor-card')
+  cardEls.forEach((el) => {
+    const i = parseInt(el.dataset.index)
+    const type = el.dataset.type || 'basic'
+
+    function getQuillHtml(field) {
+      const entry = editorQuills.find(q => q.index === i && q.field === field)
+      if (!entry) return ''
+      const html = entry.quill.root.innerHTML
+      return html === '<p><br></p>' ? '' : html
+    }
+
+    if (type === 'basic') {
+      editorAllCards[i] = { type: 'basic', front: getQuillHtml('front'), back: getQuillHtml('back') }
+    } else if (type === 'cloze') {
+      editorAllCards[i] = { type: 'cloze', clozeText: getQuillHtml('clozeText'), extra: getQuillHtml('extra') }
+    } else if (type === 'quiz') {
+      const optionRows = el.querySelectorAll('.editor-option-row')
+      const options = []
+      const correctIndices = []
+      optionRows.forEach((row, oi) => {
+        const optQuill = editorQuills.find(q => q.index === i && q.field === `option_${oi}`)
+        let text = ''
+        if (optQuill) {
+          text = optQuill.quill.root.innerHTML
+          if (text === '<p><br></p>') text = ''
+        }
+        const checked = row.querySelector('input[type="checkbox"]').checked
+        options.push(text)
+        if (checked) correctIndices.push(oi)
+      })
+      editorAllCards[i] = { type: 'quiz', front: getQuillHtml('front'), options, correctIndices, explanation: getQuillHtml('explanation') }
+    }
+  })
+}
+
+async function saveEditorDeck() {
+  const name = document.getElementById('editor-deck-name').value.trim()
+  if (!name) {
+    alert('Podaj nazwę talii.')
+    return false
+  }
+  const cards = getEditorCards()
+
+  // Generate .apkg blob
+  const apkgBlob = await generateApkgBlob(name, cards)
+  if (!apkgBlob) return false
+
+  // Upload to server
+  try {
+    if (currentEditingDeckId) {
+      await apiUpdateDeck(currentEditingDeckId, apkgBlob, name, cards.length)
+    } else {
+      const result = await apiUploadDeck(apkgBlob, name, cards.length)
+      currentEditingDeckId = result.id
+    }
+    // Refresh local cache
+    const fresh = await apiGetDecks()
+    saveLocalDecks(fresh)
+    return true
+  } catch (e) {
+    alert('Błąd zapisu: ' + e.message)
+    return false
+  }
+}
+
+// Editor event listeners
+document.getElementById('editor-back').addEventListener('click', () => {
+  if (getEditorCards().length > 0 || document.getElementById('editor-deck-name').value.trim()) {
+    if (!confirm('Wyjść bez zapisywania?')) return
+  }
+  closeEditor()
+})
+
+document.getElementById('editor-save').addEventListener('click', async () => {
+  if (await saveEditorDeck()) {
+    closeEditor()
+  }
+})
+
+document.getElementById('editor-export').addEventListener('click', async () => {
+  const name = document.getElementById('editor-deck-name').value.trim() || 'Bez nazwy'
+  const cards = getEditorCards()
+  if (cards.length === 0) {
+    alert('Dodaj przynajmniej jedną kartę przed eksportem.')
+    return
+  }
+  await exportAsApkg(name, cards)
+})
+
+document.getElementById('editor-add-basic').addEventListener('click', () => {
+  syncEditorPageToCards()
+  editorAllCards.push({ type: 'basic', front: '', back: '' })
+  editorPage = Math.ceil(editorAllCards.length / EDITOR_PAGE_SIZE) - 1
+  renderEditorPage()
+})
+
+document.getElementById('editor-add-cloze').addEventListener('click', () => {
+  syncEditorPageToCards()
+  editorAllCards.push({ type: 'cloze', clozeText: '', extra: '' })
+  editorPage = Math.ceil(editorAllCards.length / EDITOR_PAGE_SIZE) - 1
+  renderEditorPage()
+})
+
+document.getElementById('editor-add-quiz').addEventListener('click', () => {
+  syncEditorPageToCards()
+  editorAllCards.push({ type: 'quiz', front: '', options: ['', '', '', ''], correctIndices: [0], explanation: '' })
+  editorPage = Math.ceil(editorAllCards.length / EDITOR_PAGE_SIZE) - 1
+  renderEditorPage()
+})
+
+function closeEditor() {
+  document.getElementById('deck-editor').classList.add('hidden')
+  // Return to menu
+  const $recent = document.getElementById('recent-decks')
+  $recent.classList.remove('hidden')
+  renderLocalDecks()
+  currentEditingDeckId = null
+}
+
+// ============ CREATE / IMPORT DECK ============
+
+document.getElementById('create-deck-btn').addEventListener('click', () => {
+  openEditor(null) // null triggers new deck creation in openEditor
+})
+
+document.getElementById('import-deck-btn').addEventListener('click', () => {
+  document.getElementById('import-deck-input').click()
+})
+
+document.getElementById('import-deck-input').addEventListener('change', (e) => {
+  const file = e.target.files[0]
+  if (!file) return
+
+  const reader = new FileReader()
+  reader.onload = async () => {
+    try {
+      const buffer = reader.result
+      const zip = await JSZip.loadAsync(buffer)
+
+      // Parse to get deck name and card count
+      let dbBuffer = null
+      if (zip.file('collection.anki21b')) {
+        const compressed = await zip.file('collection.anki21b').async('uint8array')
+        try { dbBuffer = zstdDecompress(compressed).buffer } catch {}
+      }
+      if (!dbBuffer) {
+        const dbFile = zip.file('collection.anki21') || zip.file('collection.anki2')
+        if (dbFile) dbBuffer = await dbFile.async('arraybuffer')
+      }
+      if (!dbBuffer) throw new Error('Nie znaleziono bazy kart w pliku .apkg.')
+
+      const initSqlJs = await loadSqlJs()
+      const SQL = await initSqlJs({ locateFile: (f) => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.11.0/${f}` })
+      const db = new SQL.Database(new Uint8Array(dbBuffer))
+
+      let deckName = file.name.replace('.apkg', '')
+      try {
+        const colResult = db.exec("SELECT decks FROM col LIMIT 1")
+        if (colResult.length > 0 && colResult[0].values.length > 0) {
+          const decks = JSON.parse(colResult[0].values[0][0])
+          const deckKeys = Object.keys(decks).filter(k => k !== '1')
+          if (deckKeys.length > 0) deckName = decks[deckKeys[0]].name || deckName
+        }
+      } catch {}
+
+      let cardCount = 0
+      try {
+        const countResult = db.exec("SELECT COUNT(*) FROM notes")
+        if (countResult.length > 0) cardCount = countResult[0].values[0][0]
+      } catch {}
+      db.close()
+
+      // Upload raw .apkg to server
+      const blob = new Blob([buffer], { type: 'application/octet-stream' })
+      await apiUploadDeck(blob, deckName, cardCount)
+
+      // Refresh
+      const fresh = await apiGetDecks()
+      saveLocalDecks(fresh)
+      renderLocalDecks()
+      alert(`Zaimportowano talię "${deckName}" (${cardCount} kart).`)
+    } catch (err) {
+      alert('Błąd importu: ' + err.message)
+      console.error('[paczka-anki] Import error:', err)
+    }
+  }
+  reader.readAsArrayBuffer(file)
+  e.target.value = ''
+})
+
+// ============ CLONE FROM RECENT ============
+
+function cloneRecentDeck(url, name) {
+  // This clones the currently loaded deck from a recent URL to a local deck
+  // We need to load the deck first, then save its cards locally
+  const $recent = document.getElementById('recent-decks')
+  $recent.classList.add('hidden')
+  $loading.classList.remove('hidden')
+  $loading.querySelector('p').textContent = 'Klonowanie talii...'
+
+  // Fetch and parse the deck
+  cloneApkg(url, name)
+}
+
+async function cloneApkg(url, deckDisplayName) {
+  try {
+    const response = await fetch(url)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    const buffer = await response.arrayBuffer()
+
+    // Parse to get card count
+    const zip = await JSZip.loadAsync(buffer)
+    let dbBuffer = null
+    if (zip.file('collection.anki21b')) {
+      const compressed = await zip.file('collection.anki21b').async('uint8array')
+      try { dbBuffer = zstdDecompress(compressed).buffer } catch {}
+    }
+    if (!dbBuffer) {
+      const dbFile = zip.file('collection.anki21') || zip.file('collection.anki2')
+      if (dbFile) dbBuffer = await dbFile.async('arraybuffer')
+    }
+
+    let cardCount = 0
+    if (dbBuffer) {
+      const initSqlJs = await loadSqlJs()
+      const SQL = await initSqlJs({ locateFile: (f) => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.11.0/${f}` })
+      const db = new SQL.Database(new Uint8Array(dbBuffer))
+      try {
+        const countResult = db.exec("SELECT COUNT(*) FROM notes")
+        if (countResult.length > 0) cardCount = countResult[0].values[0][0]
+      } catch {}
+      db.close()
+    }
+
+    // Upload the raw .apkg to server
+    const blob = new Blob([buffer], { type: 'application/octet-stream' })
+    const name = deckDisplayName + ' (klon)'
+    await apiUploadDeck(blob, name, cardCount)
+
+    // Refresh
+    const fresh = await apiGetDecks()
+    saveLocalDecks(fresh)
+
+    $loading.classList.add('hidden')
+    document.getElementById('recent-decks').classList.remove('hidden')
+    renderLocalDecks()
+    alert(`Sklonowano talię "${name}" (${cardCount} kart). Możesz ją teraz edytować.`)
+  } catch (e) {
+    $loading.classList.add('hidden')
+    document.getElementById('recent-decks').classList.remove('hidden')
+    alert('Błąd klonowania: ' + e.message)
+  }
+}
+
+// ============ PATCH showRecentDecks to include clone buttons & local decks ============
+// (Already patched above — showRecentDecks includes clone buttons and renderLocalDecks call)
+

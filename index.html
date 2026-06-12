@@ -7,6 +7,8 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" />
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"></script>
+  <link href="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.snow.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/quill@2.0.3/dist/quill.js"></script>
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
@@ -21,6 +23,30 @@
       <p class="recent-subtitle">Ostatnio otwierane pliki .apkg</p>
       <div id="recent-list"></div>
       <p class="recent-empty hidden" id="recent-empty">Brak historii. Otwórz plik .apkg aby go tutaj zobaczyć.</p>
+      <hr class="menu-divider" />
+      <h3 class="local-section-title">✏️ Moje talie</h3>
+      <div id="local-deck-list"></div>
+      <button id="create-deck-btn" class="fc-btn create-deck-btn">➕ Stwórz nową talię</button>
+      <button id="import-deck-btn" class="fc-btn import-deck-btn">📥 Importuj talię (.apkg)</button>
+      <input type="file" id="import-deck-input" accept=".apkg" class="hidden" />
+    </div>
+    <!-- Deck editor -->
+    <div id="deck-editor" class="hidden">
+      <div class="editor-header">
+        <button id="editor-back" class="fc-btn-small">← Powrót</button>
+        <input type="text" id="editor-deck-name" placeholder="Nazwa talii..." class="editor-name-input" />
+        <button id="editor-save" class="fc-btn fc-btn-green">💾 Zapisz</button>
+        <button id="editor-export" class="fc-btn">📤 Eksportuj .apkg</button>
+      </div>
+      <div class="editor-controls">
+        <div class="editor-add-group">
+          <button id="editor-add-basic" class="fc-btn">➕ Podstawowa</button>
+          <button id="editor-add-cloze" class="fc-btn">➕ Luka</button>
+          <button id="editor-add-quiz" class="fc-btn">➕ Quiz</button>
+        </div>
+        <span id="editor-card-count" class="editor-count"></span>
+      </div>
+      <div id="editor-cards"></div>
     </div>
     <div id="content" class="hidden">
       <header id="header">
