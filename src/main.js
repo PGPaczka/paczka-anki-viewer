@@ -1651,6 +1651,43 @@ function extractCardsForEditor(db) {
     }
   } catch {}
 
+  // Fallback: if no cards found with mid, try without mid
+  if (cards.length === 0) {
+    try {
+      const notesResult = db.exec("SELECT flds FROM notes ORDER BY id")
+      if (notesResult.length > 0) {
+        cards = notesResult[0].values.map(row => {
+          let rawFields = row[0]
+          if (!rawFields) return null
+          if (rawFields instanceof Uint8Array) rawFields = new TextDecoder('utf-8').decode(rawFields)
+          if (typeof rawFields !== 'string') rawFields = String(rawFields)
+          const fields = rawFields.split('\x1f')
+
+          // Try quiz detection without field names
+          if (detectQuizFormat(fields, [])) {
+            const parsed = parseQuizCard(fields, [])
+            return { type: 'quiz', front: parsed.front, options: parsed.options, correctIndices: parsed.correctIndices, explanation: parsed.explanation || '' }
+          }
+
+          const front = fields[0] || ''
+          if (front.includes('{{c')) {
+            return { type: 'cloze', clozeText: front, extra: fields.slice(1).filter(f => f.trim()).join('\n') }
+          }
+
+          const back = fields.length > 1 ? fields.slice(1).filter(f => f.trim()).join('<hr/>') : ''
+          return { type: 'basic', front, back }
+        }).filter(c => {
+          if (!c) return false
+          const ft = stripHtml(c.front || c.clozeText || '').trim()
+          if (!ft) return false
+          if (ft.toLowerCase().includes('please update to the latest anki version')) return false
+          if (/^\s*[\d\s]+\s*$/.test(ft) && ft.length < 20) return false
+          return true
+        })
+      }
+    } catch {}
+  }
+
   return cards
 }
 
@@ -2259,6 +2296,7 @@ let editorQuills = []
 const QUILL_TOOLBAR = [
   ['bold', 'italic', 'underline', 'strike'],
   [{ 'color': [] }],
+  [{ 'align': [] }],
   ['image'],
   ['clean']
 ]
@@ -2272,7 +2310,9 @@ function createQuillEditor(container, initialHtml) {
     placeholder: 'Wpisz treść...',
   })
   if (initialHtml) {
-    quill.root.innerHTML = initialHtml
+    // Use clipboard to paste HTML (preserves formatting better than innerHTML)
+    const delta = quill.clipboard.convert({ html: initialHtml })
+    quill.setContents(delta)
   }
   return quill
 }
@@ -2413,7 +2453,10 @@ function renderEditorPage() {
       modules: { toolbar: false },
       placeholder: `Opcja ${oi + 1}...`,
     })
-    if (html) quill.root.innerHTML = html
+    if (html) {
+      const delta = quill.clipboard.convert({ html })
+      quill.setContents(delta)
+    }
     editorQuills.push({ quill, index: idx, field: `option_${oi}` })
   })
 
