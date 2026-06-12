@@ -929,6 +929,9 @@ let flashcardIndex = 0
 let flashcardDeck = []
 let learnedCards = []
 let notLearnedCards = []
+let undoHistory = [] // stack of {card, known} for undo
+
+const $fcUndo = document.getElementById('fc-undo')
 
 // Persistence via localStorage — keyed by file URL
 function getStorageKey() {
@@ -1023,6 +1026,8 @@ function resetFlashcards() {
   flashcardIndex = 0
   learnedCards = []
   notLearnedCards = []
+  undoHistory = []
+  $fcUndo.disabled = true
   clearProgress()
   $fcDone.classList.add('hidden')
   document.getElementById('flashcard-container').classList.remove('hidden')
@@ -1119,6 +1124,10 @@ function markCard(known) {
     notLearnedCards.push(card)
   }
 
+  // Save to undo history
+  undoHistory.push({ card, known })
+  $fcUndo.disabled = false
+
   // Animate exit
   const direction = known ? 'swipe-exit-right' : 'swipe-exit-left'
   $flashcard.classList.add(direction)
@@ -1138,6 +1147,31 @@ function markCard(known) {
       })
     })
   }, 300)
+}
+
+function undoLastCard() {
+  if (undoHistory.length === 0) return
+  const last = undoHistory.pop()
+  
+  // Remove from learned/not learned
+  if (last.known) {
+    const idx = learnedCards.lastIndexOf(last.card)
+    if (idx >= 0) learnedCards.splice(idx, 1)
+  } else {
+    const idx = notLearnedCards.lastIndexOf(last.card)
+    if (idx >= 0) notLearnedCards.splice(idx, 1)
+  }
+
+  // Go back
+  flashcardIndex--
+  $fcUndo.disabled = undoHistory.length === 0
+
+  // If we were on done screen, show flashcard container again
+  $fcDone.classList.add('hidden')
+  document.getElementById('flashcard-container').classList.remove('hidden')
+
+  saveProgress()
+  showFlashcard()
 }
 
 function shuffleDeck() {
@@ -1175,6 +1209,8 @@ $fcNotKnown.addEventListener('click', (e) => {
 })
 
 $fcShuffle.addEventListener('click', () => shuffleDeck())
+
+$fcUndo.addEventListener('click', () => undoLastCard())
 
 $fcReset.addEventListener('click', () => {
   if (!confirm('Zresetować postęp? Wszystkie nauczone/nie nauczone karty zostaną wyzerowane.')) return
