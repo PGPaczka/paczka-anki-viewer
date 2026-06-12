@@ -94,6 +94,13 @@ function showError(msg) {
 function showContent() {
   $loading.classList.add('hidden')
   $content.classList.remove('hidden')
+  // Show back button
+  const $back = document.getElementById('back-to-menu')
+  const backUrl = new URL(window.location)
+  backUrl.searchParams.delete('url')
+  backUrl.searchParams.delete('mode')
+  $back.href = backUrl.toString()
+  $back.classList.remove('hidden')
 }
 
 function stripHtml(html) {
@@ -811,6 +818,10 @@ async function loadApkg(url) {
     renderCards(cards)
     showContent()
 
+    // Save to recent decks
+    const displayName = deckName !== 'Default' ? deckName : fileName.replace('.apkg', '')
+    saveRecentDeck(url, displayName, cards.length)
+
     // Restore mode from URL
     const initialMode = params.get('mode')
     if (initialMode === 'flashcard') {
@@ -822,12 +833,58 @@ async function loadApkg(url) {
   }
 }
 
+// ============ RECENT DECKS ============
+
+const RECENT_KEY = 'paczka-anki:recent'
+const MAX_RECENT = 10
+
+function getRecentDecks() {
+  try {
+    return JSON.parse(localStorage.getItem(RECENT_KEY) || '[]')
+  } catch { return [] }
+}
+
+function saveRecentDeck(url, name, cardCount) {
+  const fileName = decodeURIComponent(url.split('/').pop() || '')
+  const recent = getRecentDecks().filter(d => d.url !== url)
+  recent.unshift({ url, name, cardCount, fileName, timestamp: Date.now() })
+  if (recent.length > MAX_RECENT) recent.length = MAX_RECENT
+  localStorage.setItem(RECENT_KEY, JSON.stringify(recent))
+}
+
+function showRecentDecks() {
+  $loading.classList.add('hidden')
+  const $recent = document.getElementById('recent-decks')
+  const $recentList = document.getElementById('recent-list')
+  const $recentEmpty = document.getElementById('recent-empty')
+  $recent.classList.remove('hidden')
+
+  const decks = getRecentDecks()
+  if (decks.length === 0) {
+    $recentEmpty.classList.remove('hidden')
+    return
+  }
+
+  $recentList.innerHTML = decks.map(d => {
+    const date = new Date(d.timestamp)
+    const dateStr = date.toLocaleDateString('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' })
+    const currentUrl = new URL(window.location)
+    currentUrl.searchParams.set('url', d.url)
+    const fileLabel = d.fileName ? `<div class="recent-item-file">${d.fileName}</div>` : ''
+    return `<a href="${currentUrl.toString()}" class="recent-item">
+      <div class="recent-item-name">📄 ${d.name}</div>
+      ${fileLabel}
+      <div class="recent-item-meta">${d.cardCount} kart · ${dateStr}</div>
+    </a>`
+  }).join('')
+}
+
 // Get URL from query params
 const params = new URLSearchParams(window.location.search)
 const fileUrl = params.get('url')
 
 if (!fileUrl) {
-  showError('Brak parametru ?url= z adresem pliku .apkg')
+  showRecentDecks()
 } else {
   // If URL is relative, resolve against current origin
   const resolvedUrl = fileUrl.startsWith('http') ? fileUrl : fileUrl

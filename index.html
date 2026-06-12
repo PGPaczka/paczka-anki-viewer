@@ -16,8 +16,15 @@
       <p>Ładowanie talii Anki...</p>
     </div>
     <div id="error" class="hidden"></div>
+    <div id="recent-decks" class="hidden">
+      <h2>📚 Ostatnie talie</h2>
+      <p class="recent-subtitle">Ostatnio otwierane pliki .apkg</p>
+      <div id="recent-list"></div>
+      <p class="recent-empty hidden" id="recent-empty">Brak historii. Otwórz plik .apkg aby go tutaj zobaczyć.</p>
+    </div>
     <div id="content" class="hidden">
       <header id="header">
+        <a id="back-to-menu" class="fc-btn-small hidden" href="#">← Menu</a>
         <h1 id="deck-name">Anki Deck</h1>
         <span id="card-count"></span>
         <span id="fc-stats" class="hidden">
