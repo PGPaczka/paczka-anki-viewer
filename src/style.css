@@ -363,6 +363,8 @@ body {
   min-height: 0;
   perspective: 1000px;
   position: relative;
+  overflow: visible;
+  touch-action: pan-y;
 }
 
 .flashcard {
@@ -371,6 +373,7 @@ body {
   height: 100%;
   cursor: pointer;
   position: relative;
+  touch-action: pan-y;
 }
 
 .flashcard-inner {
@@ -551,11 +554,11 @@ body {
 }
 
 .swipe-indicator.left {
-  left: -50px;
+  left: 4px;
 }
 
 .swipe-indicator.right {
-  right: -50px;
+  right: 4px;
 }
 
 .swipe-indicator.visible {

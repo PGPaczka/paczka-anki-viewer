@@ -1068,9 +1068,18 @@ function markCard(known) {
 
   setTimeout(() => {
     $flashcard.classList.remove(direction)
+    // Disable flip transition so the back of the next card isn't briefly visible
+    const inner = $flashcard.querySelector('.flashcard-inner')
+    if (inner) inner.style.transition = 'none'
     flashcardIndex++
     saveProgress()
     showFlashcard()
+    // Re-enable transition after a frame
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (inner) inner.style.transition = ''
+      })
+    })
   }, 300)
 }
 
@@ -1148,9 +1157,9 @@ document.addEventListener('keydown', (e) => {
 // ============ SWIPE GESTURES ============
 
 $flashcard.addEventListener('pointerdown', (e) => {
+  if (e.pointerType === 'touch') return // handled by touch events
   if (flashcardIndex >= flashcardDeck.length) return
   if ($flashcard.classList.contains('quiz-mode')) return
-  // Don't capture if clicking buttons inside the card
   if (e.target.closest('button')) return
   swipeStartX = e.clientX
   swipeCurrentX = e.clientX
@@ -1159,6 +1168,7 @@ $flashcard.addEventListener('pointerdown', (e) => {
 })
 
 $flashcard.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'touch') return
   if (swipeStartX === 0) return
   swipeCurrentX = e.clientX
   const dx = swipeCurrentX - swipeStartX
@@ -1187,6 +1197,7 @@ $flashcard.addEventListener('pointermove', (e) => {
 })
 
 $flashcard.addEventListener('pointerup', (e) => {
+  if (e.pointerType === 'touch') return
   if (swipeStartX === 0) return
   const dx = swipeCurrentX - swipeStartX
 
@@ -1208,7 +1219,84 @@ $flashcard.addEventListener('pointerup', (e) => {
   setTimeout(() => { isSwiping = false }, 50)
 })
 
-$flashcard.addEventListener('pointercancel', () => {
+$flashcard.addEventListener('pointercancel', (e) => {
+  if (e.pointerType === 'touch') return
+  $flashcard.style.transform = ''
+  swipeStartX = 0
+  $swipeLeft.classList.remove('visible')
+  $swipeRight.classList.remove('visible')
+  isSwiping = false
+})
+
+// ============ TOUCH EVENTS (primary handler for all touch devices) ============
+
+let touchStartY = 0
+
+$flashcard.addEventListener('touchstart', (e) => {
+  if (flashcardIndex >= flashcardDeck.length) return
+  if ($flashcard.classList.contains('quiz-mode')) return
+  if (e.target.closest('button')) return
+  const touch = e.touches[0]
+  swipeStartX = touch.clientX
+  swipeCurrentX = touch.clientX
+  touchStartY = touch.clientY
+  isSwiping = false
+}, { passive: true })
+
+$flashcard.addEventListener('touchmove', (e) => {
+  if (swipeStartX === 0) return
+  const touch = e.touches[0]
+  swipeCurrentX = touch.clientX
+  const dx = swipeCurrentX - swipeStartX
+  const dy = touch.clientY - touchStartY
+
+  // Only swipe horizontally — if vertical movement is dominant, ignore
+  if (!isSwiping && Math.abs(dy) > Math.abs(dx) && Math.abs(dy) > 10) {
+    swipeStartX = 0
+    return
+  }
+
+  if (Math.abs(dx) > 20) {
+    isSwiping = true
+  }
+
+  if (isSwiping) {
+    if (e.cancelable) e.preventDefault()
+    const rotation = dx * 0.05
+    $flashcard.style.transform = `translateX(${dx}px) rotate(${rotation}deg)`
+
+    if (dx < -80) {
+      $swipeLeft.classList.add('visible')
+      $swipeRight.classList.remove('visible')
+    } else if (dx > 80) {
+      $swipeRight.classList.add('visible')
+      $swipeLeft.classList.remove('visible')
+    } else {
+      $swipeLeft.classList.remove('visible')
+      $swipeRight.classList.remove('visible')
+    }
+  }
+}, { passive: false })
+
+$flashcard.addEventListener('touchend', () => {
+  if (swipeStartX === 0) return
+  const dx = swipeCurrentX - swipeStartX
+
+  $swipeLeft.classList.remove('visible')
+  $swipeRight.classList.remove('visible')
+
+  if (isSwiping && Math.abs(dx) > 80) {
+    markCard(dx > 0)
+  } else {
+    $flashcard.style.transform = ''
+  }
+
+  swipeStartX = 0
+  swipeCurrentX = 0
+  setTimeout(() => { isSwiping = false }, 50)
+})
+
+$flashcard.addEventListener('touchcancel', () => {
   $flashcard.style.transform = ''
   swipeStartX = 0
   $swipeLeft.classList.remove('visible')
